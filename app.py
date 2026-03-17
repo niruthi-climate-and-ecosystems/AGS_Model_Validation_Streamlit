@@ -2,18 +2,18 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 import requests
+import json
 
-# Request API
-req_api = "http://127.0.0.1:8000/validate/weekly_advisory/"
+# Request API URLs
+req_api = "http://13.200.198.227:8090/validate/weekly_advisory/"
+weather_api = "http://13.200.198.227:8090/gfs-weather/"
 
 # CROPS
-RABI_CROPS = ['None','Paddy','Mustard','Blackgram','Greengram','Potato']
-KHARIF_CROPS = ['None','Paddy','Potato']
-
-SOILTYPES = ['None','Red Soil','Laterite Soil','Red and Yellow Soil',
+RABI_CROPS = ['Paddy','Mustard','Blackgram','Greengram','Potato']
+KHARIF_CROPS = ['Paddy','Potato']
+SOILTYPES = ['Red Soil','Laterite Soil','Red and Yellow Soil',
              'Coastal Saline and Alluvial Soil','Deltaic Alluvial Soil',
              'Black Soil','Mixed Red and Black Soil','Brown Forest Soil']
-
 LANDTYPE = ['Low Land','Medium Land','Up Land']
 
 # ----------------------------------
@@ -25,56 +25,78 @@ st.title("Welcome to Model Testing Platform!")
 st.header("Please Select Model Input Parameters:")
 
 # ----------------------------------
-# Dynamic Season → Crop
+# Row 1: Season, Soil, Lat, Lon, Elevation
 # ----------------------------------
-col1, col2 = st.columns(2)
+col_a, col_b, col_c, col_d, col_e = st.columns(5)
+with col_a:
+    season = st.selectbox("Select Season :", ["Rabi", "Kharif"], index=0) # Default Rabi
+with col_b:
+    soil_type = st.selectbox("Select Soil Type :", SOILTYPES, index=0)
+with col_c:
+    lat = st.number_input("Latitude :", value=21.44, format="%.4f")
+with col_d:
+    lon = st.number_input("Longitude :", value=85.15, format="%.4f")
+with col_e:
+    elev = st.number_input("Elevation (m) :", value=100)
+
+# ----------------------------------
+# Row 2: Crop, Land Type, Sowing Date, Advisory Date
+# ----------------------------------
+col1, col2, col3, col4 = st.columns(4)
+
+if season == "Rabi":
+    crops = RABI_CROPS
+elif season == "Kharif":
+    crops = KHARIF_CROPS
+else:
+    crops = ["None"]
+
 with col1:
-    season = st.selectbox("Select Season :", ["None", "Rabi", "Kharif"],width='stretch')
+    # Defaulting to Potato (index 4 in RABI_CROPS)
+    default_crop_idx = crops.index("Potato") if "Potato" in crops else 0
+    crop_selection = st.selectbox("Select Crop :", crops, index=default_crop_idx)
 
-    if season == "Rabi":
-        crops = RABI_CROPS
-    elif season == "Kharif":
-        crops = KHARIF_CROPS
-    else:
-        crops = ["None"]
 with col2:
-    st.selectbox("Select Soil Type :",SOILTYPES,width='stretch')
-
-# ----------------------------------
-# Layout Columns
-# ----------------------------------
-col3, col4, col5, col6 = st.columns(4)
+    land_selection = st.selectbox("Select Land Type :", LANDTYPE, index=0)
 
 with col3:
-    crop_selection = st.selectbox("Select Crop :", crops)
+    sowing_date = st.date_input("Sowing Date :", value=datetime(2026, 1, 1))
 
 with col4:
-    elevation = st.selectbox("Select Land Type :", LANDTYPE)
-
-with col5:
-    sowing_date = st.date_input("Sowing Date :")
-
-with col6:
-    adv_date = st.date_input("Advisory Date :")
+    adv_date = st.date_input("Advisory Date :", value=datetime(2026, 3, 16))
 
 # ----------------------------------
-# Weather Table
+# Weather Section
 # ----------------------------------
-weather_type = st.selectbox("Weather Type: ",['Manual','Forecast'])
+weather_type = st.selectbox("Weather Type: ", ['Manual', 'Forecast'], index=0)
 
 if weather_type == "Forecast":
-    table_option = True
-    st.write("Niruthi weather forecast information will be used for advisory generation...")
+    st.info("Fetching Niruthi weather forecast for specified location...")
+    weather_payload = {
+        "lat": lat,
+        "lon": lon,
+        "date": str(adv_date)
+    }
+    try:
+        wthr_req = requests.post(url=weather_api, json=weather_payload)
+        if wthr_req.status_code == 200:
+            weather_data = wthr_req.json() # Assuming API returns list of dicts
+            st.success("Forecast data retrieved!")
+            # Optional: Show a preview of fetched weather
+            st.write(weather_data) 
+            weather_data = []
+            # weather_type = 'forecast'
+        else:
+            st.error(f"Weather API Error: {wthr_req.status_code}")
+            weather_data = [{"Date": str(adv_date), "Rainfall (mm)": 0.0}] # Fallback
+    except Exception as e:
+        st.error(f"Weather Connection Error: {e}")
+        weather_data = []
+
 else:
-    table_option = False
-
-if not table_option:
     st.subheader("7-Day Weather Input :")
-
-    start_date = adv_date
-    dates = [start_date + timedelta(days=i) for i in range(7)]
-
-    df = pd.DataFrame({
+    dates = [adv_date + timedelta(days=i) for i in range(7)]
+    df_init = pd.DataFrame({
         "Date": dates,
         "Rainfall (mm)": [0.0]*7,
         "Tmin (°C)": [20.0]*7,
@@ -82,106 +104,64 @@ if not table_option:
         "RH_min (%)": [30.0]*7,
         "RH_max (%)": [70.0]*7
     })
-
-    edited_df = st.data_editor(
-        df,
-        num_rows="fixed",
-        use_container_width=True,
-        disabled = table_option
-    )
-
+    edited_df = st.data_editor(df_init, num_rows="fixed", use_container_width=True)
     edited_df['Date'] = edited_df['Date'].astype(str)
-
-    numeric_cols = [
-        "Rainfall (mm)",
-        "Tmin (°C)",
-        "Tmax (°C)",
-        "RH_min (%)",
-        "RH_max (%)"
-    ]
-
-    edited_df[numeric_cols] = edited_df[numeric_cols].fillna(0.0)
+    weather_data = edited_df.to_dict(orient="records")
 
 # ----------------------------------
 # Submit Button
 # ----------------------------------
 if st.button("Submit", type="primary"):
-
     with st.spinner("Generating Advisory..."):
-        if weather_type == 'Manual':
-            weather_data = edited_df.to_dict(orient="records")
-        else:
-            dates = [adv_date + timedelta(days=i) for i in range(7)]
-            df = pd.DataFrame({
-                "Date": dates,
-                "Rainfall (mm)": [0.0]*7,
-                "Tmin (°C)": [20.0]*7,
-                "Tmax (°C)": [30.0]*7,
-                "RH_min (%)": [30.0]*7,
-                "RH_max (%)": [70.0]*7
-            })
-            numeric_cols = [
-                "Rainfall (mm)",
-                "Tmin (°C)",
-                "Tmax (°C)",
-                "RH_min (%)",
-                "RH_max (%)"
-            ]
-            df['Date'] = df['Date'].astype(str)
-            df[numeric_cols] = df[numeric_cols].fillna(0.0)
-            weather_data = df.to_dict(orient='records')
-
-        payload = {
+        
+        # Build Internal Dictionary as per your default requirements
+        advisory_details = {
             "season": season,
             "crop_name": crop_selection,
             "sowing_date": str(sowing_date),
             "current_date": str(adv_date),
             "weather_json": weather_data,
-            "weather_input": weather_type
+            "weather_input": weather_type,
+            "lat": lat,
+            "lon": lon,
+            "elevation": elev,
+            "weekly_advisory": "True" # Specific string requirement from your request
         }
 
-        response = requests.post(req_api, json=payload)
+        # Final Payload: Root level fields + stringified 'weekly_advisory'
+        payload = {
+            "weekly_advisory": json.dumps(advisory_details),
+            **advisory_details 
+        }
 
-    # ----------------------------------
-    # Handle Response
-    # ----------------------------------
-    if response.status_code == 200:
+        try:
+            response = requests.post(req_api, json=payload)
+            
+            if response.status_code == 200:
+                st.success("Advisory Generated Successfully!")
+                res_data = response.json()
+                
+                # Dynamic parsing based on response type
+                if isinstance(res_data, str):
+                    advisory_df = pd.read_json(res_data)
+                else:
+                    advisory_df = pd.DataFrame(res_data)
 
-        st.success("Advisory Generated Successfully!")
+                # Formatting results
+                display_cols = ['crop_name','crop_stage','cropstage_week_start','cropstage_week_end','advisory_title','advisory_content']
+                existing = [c for c in display_cols if c in advisory_df.columns]
+                
+                final_df = advisory_df[existing].rename(columns={
+                    "crop_name":"Crop", "crop_stage":"Stage",
+                    "cropstage_week_start":"Week_From", "cropstage_week_end":"Week_To",
+                    "advisory_title":"Adv. Title", "advisory_content":"Adv. Content"
+                })
 
-        advisory_response = pd.read_json(response.json())
+                st.table(final_df) # Using table for a clean PRD-like look
 
-        hide_columns = [
-            "state","advisory_index","advisory_code",
-            "rain_min","rain_max","rain_mean",
-            "temp_min","temp_max","rh_min","rh_max",
-            "rainydays_min","raindays_max",
-            "wind_min","wind_max","landtype",
-            "agro_week","day_of_month","month_of_year"
-        ]
+            else:
+                st.error(f"API Error: {response.status_code}")
+                st.json(response.json())
 
-        advisory_response = advisory_response[
-            advisory_response.columns.difference(hide_columns)
-        ]
-
-        advisory_response = advisory_response[
-            ['crop_name','crop_stage',
-             'cropstage_week_start','cropstage_week_end',
-             'advisory_title','advisory_content']
-        ]
-
-        advisory_response = advisory_response.rename(columns={
-            "crop_name":"Crop",
-            "crop_stage":"Stage",
-            "cropstage_week_start":"Week_From",
-            "cropstage_week_end":"Week_To",
-            "advisory_title":"Adv. Title",
-            "advisory_content":"Adv. Content"
-        })
-
-        st.data_editor(advisory_response, use_container_width=True)
-        st.write(response)
-
-    else:
-        st.error(f"API Error: {response.status_code}")
-        st.write(response.text)
+        except Exception as e:
+            st.error(f"Connection Error: {str(e)}")
