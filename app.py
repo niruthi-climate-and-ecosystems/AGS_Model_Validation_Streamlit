@@ -16,6 +16,10 @@ SOILTYPES = ['Red Soil','Laterite Soil','Red and Yellow Soil',
              'Black Soil','Mixed Red and Black Soil','Brown Forest Soil']
 LANDTYPE = ['Low Land','Medium Land','Up Land']
 
+# District and Block
+coords = pd.read_csv('block_coords_info.csv')
+
+
 # ----------------------------------
 # PAGE CONFIG
 # ----------------------------------
@@ -33,9 +37,24 @@ with col_a:
 with col_b:
     soil_type = st.selectbox("Select Soil Type :", SOILTYPES, index=0)
 with col_c:
-    lat = st.number_input("Latitude :", value=21.44, format="%.4f")
+    districts = coords['district_name'].tolist()
+    district = st.selectbox("Select District :",districts,width='stretch')
+    
 with col_d:
-    lon = st.number_input("Longitude :", value=85.15, format="%.4f")
+    if district:
+        blocks = coords[coords['district_name'] == district]['block_name'].tolist()
+        block = st.selectbox("Select Block :", options=blocks, width='stretch')
+
+        if block:
+            row = coords[
+                (coords['district_name'] == district) &
+                (coords['block_name'] == block)
+            ].iloc[0]
+
+            lat = float(row["latitude"])
+            lon = float(row["longitude"])
+
+            st.write("Lat:", lat, "Lon:", lon)
 with col_e:
     elev = st.number_input("Elevation (m) :", value=100)
 
@@ -104,7 +123,7 @@ else:
         "RH_min (%)": [30.0]*7,
         "RH_max (%)": [70.0]*7
     })
-    edited_df = st.data_editor(df_init, num_rows="fixed", use_container_width=True)
+    edited_df = st.data_editor(df_init, num_rows="fixed", width='content')
     edited_df['Date'] = edited_df['Date'].astype(str)
     weather_data = edited_df.to_dict(orient="records")
 
@@ -157,7 +176,7 @@ if st.button("Submit", type="primary"):
                     "advisory_title":"Adv. Title", "advisory_content":"Adv. Content"
                 })
 
-                st.table(final_df) # Using table for a clean PRD-like look
+                st.data_editor(final_df,width='content') # Using table for a clean PRD-like look
 
             else:
                 st.error(f"API Error: {response.status_code}")
